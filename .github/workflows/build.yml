@@ -2,8 +2,9 @@ name: Build APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -26,14 +27,6 @@ jobs:
           cp index.html www/
           cp -r css www/
           cp -r js www/
-          echo "=== www contents ==="
-          ls -la www/
-          echo "=== www/js contents ==="
-          ls -la www/js/
-          echo "=== Check calendar.js ==="
-          tail -5 www/js/calendar.js
-          echo "=== Check if Calendar is defined ==="
-          grep -n "const Calendar" www/js/calendar.js || echo "Calendar not found!"
 
       - name: Prepare assets folder
         run: |
@@ -43,7 +36,6 @@ jobs:
             mkdir -p assets/splash
             cp icon.png assets/splash/splash.png
           fi
-          ls -la assets/ || true
 
       - name: Install dependencies
         run: npm install
@@ -57,15 +49,6 @@ jobs:
       - name: Sync web assets
         run: npx cap sync android
 
-      - name: Verify files in android assets
-        run: |
-          echo "=== android/app/src/main/assets/public ==="
-          ls -la android/app/src/main/assets/public/ || echo "public folder not found!"
-          echo "=== android assets/js ==="
-          ls -la android/app/src/main/assets/public/js/ || echo "js folder not found!"
-          echo "=== Check calendar.js in android ==="
-          tail -5 android/app/src/main/assets/public/js/calendar.js || echo "calendar.js NOT FOUND in android!"
-
       - name: Copy Adhan & Dua sounds to Android raw
         run: |
           RAW_DIR="android/app/src/main/res/raw"
@@ -76,11 +59,12 @@ jobs:
           for sound in adhan1 adhan2 adhan_fajr dua_adhan; do
             if [ -f "sounds/${sound}.mp3" ]; then
               cp "sounds/${sound}.mp3" "$RAW_DIR/${sound}.mp3"
-              echo "✓ ${sound}.mp3 copied"
-            else
-              echo "⚠️ sounds/${sound}.mp3 NOT FOUND"
             fi
           done
+
+          if [ -f "icon.png" ]; then
+            cp icon.png "$DRAWABLE_DIR/ic_stat_adhan.png"
+          fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
@@ -90,8 +74,21 @@ jobs:
           cd android
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Prepare APK for direct download
+        run: cp android/app/build/outputs/apk/debug/*.apk khushu.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: khushu-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: khushu.apk
+
+      - name: Publish direct APK download release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" khushu.apk \
+            --repo "${{ github.repository }}" \
+            --title "خُشوع - إصدار ${{ github.run_number }}" \
+            --notes "تحميل تطبيق خُشوع بصيغة APK" \
+            --latest
