@@ -1,0 +1,106 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Prepare www folder
+        run: |
+          mkdir -p www
+          cp index.html www/
+          cp -r css www/
+          cp -r js www/
+          ls -la www/
+          ls -la www/css/
+          ls -la www/js/
+
+      - name: Prepare assets folder
+        run: |
+          mkdir -p assets
+          if [ -f icon.png ]; then
+            cp icon.png assets/icon.png
+            mkdir -p assets/splash
+            cp icon.png assets/splash/splash.png
+          fi
+          ls -la assets/ || true
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Generate icons and splash screens
+        run: npx @capacitor/assets generate --android || echo "Asset generation skipped"
+
+      - name: Sync web assets
+        run: npx cap sync android
+
+      - name: Copy Adhan & Dua sounds to Android raw
+        run: |
+          RAW_DIR="android/app/src/main/res/raw"
+          DRAWABLE_DIR="android/app/src/main/res/drawable"
+          mkdir -p "$RAW_DIR"
+          mkdir -p "$DRAWABLE_DIR"
+
+          for sound in adhan1 adhan2 adhan_fajr dua_adhan; do
+            if [ -f "sounds/${sound}.mp3" ]; then
+              cp "sounds/${sound}.mp3" "$RAW_DIR/${sound}.mp3"
+              echo "✓ ${sound}.mp3 copied"
+            else
+              echo "⚠️ sounds/${sound}.mp3 NOT FOUND"
+            fi
+          done
+
+          # Notification icon
+          cat > "$DRAWABLE_DIR/ic_stat_adhan.xml" << 'XMLEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="96dp" android:height="96dp"
+              android:viewportWidth="96" android:viewportHeight="96">
+            <path android:fillColor="#FFFFFF"
+                android:pathData="M48,8 L48,20 M40,20 L56,20 L56,26 L40,26 Z M32,30 L64,30 L64,40 L32,40 Z M44,32 L44,40 M52,32 L52,40 Z M28,44 L68,44 L68,60 L28,60 Z M44,48 L44,56 M52,48 L52,56 Z M24,64 L72,64 L72,84 L24,84 Z M44,68 L44,80 M52,68 L52,80 Z M8,88 L88,88 L88,92 L8,92 Z"/>
+          </vector>
+          XMLEOF
+
+          echo "=== Raw folder ==="
+          ls -la "$RAW_DIR/"
+
+      - name: Add Android permissions to manifest
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's|</manifest>|    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n</manifest>|' "$MANIFEST"
+            echo "=== Manifest permissions ==="
+            grep "uses-permission" "$MANIFEST" || true
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: khushu-apk
+          path: android/app/build/outputs/apk/debug/*.apk
