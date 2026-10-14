@@ -26,9 +26,14 @@ jobs:
           cp index.html www/
           cp -r css www/
           cp -r js www/
+          echo "=== www contents ==="
           ls -la www/
-          ls -la www/css/
+          echo "=== www/js contents ==="
           ls -la www/js/
+          echo "=== Check calendar.js ==="
+          tail -5 www/js/calendar.js
+          echo "=== Check if Calendar is defined ==="
+          grep -n "const Calendar" www/js/calendar.js || echo "Calendar not found!"
 
       - name: Prepare assets folder
         run: |
@@ -52,6 +57,15 @@ jobs:
       - name: Sync web assets
         run: npx cap sync android
 
+      - name: Verify files in android assets
+        run: |
+          echo "=== android/app/src/main/assets/public ==="
+          ls -la android/app/src/main/assets/public/ || echo "public folder not found!"
+          echo "=== android assets/js ==="
+          ls -la android/app/src/main/assets/public/js/ || echo "js folder not found!"
+          echo "=== Check calendar.js in android ==="
+          tail -5 android/app/src/main/assets/public/js/calendar.js || echo "calendar.js NOT FOUND in android!"
+
       - name: Copy Adhan & Dua sounds to Android raw
         run: |
           RAW_DIR="android/app/src/main/res/raw"
@@ -67,29 +81,6 @@ jobs:
               echo "⚠️ sounds/${sound}.mp3 NOT FOUND"
             fi
           done
-
-          # Notification icon
-          cat > "$DRAWABLE_DIR/ic_stat_adhan.xml" << 'XMLEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="96dp" android:height="96dp"
-              android:viewportWidth="96" android:viewportHeight="96">
-            <path android:fillColor="#FFFFFF"
-                android:pathData="M48,8 L48,20 M40,20 L56,20 L56,26 L40,26 Z M32,30 L64,30 L64,40 L32,40 Z M44,32 L44,40 M52,32 L52,40 Z M28,44 L68,44 L68,60 L28,60 Z M44,48 L44,56 M52,48 L52,56 Z M24,64 L72,64 L72,84 L24,84 Z M44,68 L44,80 M52,68 L52,80 Z M8,88 L88,88 L88,92 L8,92 Z"/>
-          </vector>
-          XMLEOF
-
-          echo "=== Raw folder ==="
-          ls -la "$RAW_DIR/"
-
-      - name: Add Android permissions to manifest
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i 's|</manifest>|    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n</manifest>|' "$MANIFEST"
-            echo "=== Manifest permissions ==="
-            grep "uses-permission" "$MANIFEST" || true
-          fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
