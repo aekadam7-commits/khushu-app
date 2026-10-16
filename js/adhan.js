@@ -9,7 +9,7 @@ const Adhan = {
   playedToday: {},
   timer: null,
   lastScheduleKey: '',
-  scheduleDays: 7,
+  scheduleDays: 14,
   
   init(){
     this.audio = document.getElementById('adhanAudio') || new Audio();
@@ -505,7 +505,9 @@ const Adhan = {
           if(this.enabled){
             const isFajr = (k === 'fajr');
             if(mode === 'full'){
-              this.playLocal(pr.name, isFajr);
+              // على الهاتف، الإشعار المجدول يشغّل الأذان بنفسه؛ لا نكرّره من داخل التطبيق
+              const notifPlays = CapacitorNative.isNative() && Notifier.permOK;
+              if(!notifPlays) this.playLocal(pr.name, isFajr);
               this.showAdhanScreen(pr.name, isFajr);
             }
           }
@@ -560,11 +562,7 @@ const Adhan = {
     if(!this.enabled){
       try{
         this.lastScheduleKey = 'disabled';
-        if(CapacitorNative.isNative() && CapacitorNative.notif()){
-          await CapacitorNative.notif().cancel({ notifications:[] }).catch(()=>{});
-        } else if(this.isCordova()){
-          Notifier.local().cancelAll();
-        }
+        await Notifier.cancelAllScheduled();
       } catch(e){}
       return;
     }
@@ -613,13 +611,7 @@ const Adhan = {
       });
     }
     
-    if(CapacitorNative.isNative() && CapacitorNative.notif()){
-      try{
-        await CapacitorNative.notif().cancel({ notifications:[] }).catch(()=>{});
-      } catch(e){}
-    } else if(this.isCordova()){
-      try{ Notifier.local().cancelAll(); } catch(e){}
-    }
+    await Notifier.cancelAllScheduled();
     
     for(const item of list){
       if(item.isPre){

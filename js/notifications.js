@@ -1,7 +1,35 @@
 const Notifier = {
+  permOK: false,
+  
   init(){
     this.updateBadge();
     this.setupNativeChannels();
+    this.refreshPermission();
+  },
+  
+  refreshPermission(){
+    try{
+      if(CapacitorNative.isNative() && CapacitorNative.notif()){
+        CapacitorNative.notif().checkPermissions()
+          .then(r => { this.permOK = (r.display === 'granted'); })
+          .catch(()=>{});
+      }
+    } catch(e){}
+  },
+  
+  // إلغاء كل الإشعارات المجدولة فعلاً (cancel بقائمة فارغة لا يلغي شيئاً)
+  async cancelAllScheduled(){
+    try{
+      if(CapacitorNative.isNative() && CapacitorNative.notif()){
+        const LN = CapacitorNative.notif();
+        const p = await LN.getPending();
+        if(p && p.notifications && p.notifications.length){
+          await LN.cancel({ notifications: p.notifications.map(x => ({ id: x.id })) });
+        }
+      } else if(this.isCordova()){
+        this.local().cancelAll();
+      }
+    } catch(e){}
   },
   
   isCordova(){
@@ -21,14 +49,17 @@ const Notifier = {
     try{
       const LN = CapacitorNative.notif();
       if(LN && LN.createChannel){
-        LN.createChannel({
-          id:'adhan_regular_channel',
-          name:'أذان الصلوات العادية',
-          description:'تنبيهات الصلوات الخمس',
-          importance:5,
-          vibration:true,
-          sound:'adhan1'
-        }).catch(()=>{});
+        // قناة مستقلة لكل صوت أذان (على أندرويد 8+ الصوت يُحدَّد من القناة لا من الإشعار)
+        ['adhan1', 'adhan2'].forEach(s => {
+          LN.createChannel({
+            id:'adhan_ch_' + s,
+            name:'أذان الصلوات (' + (s === 'adhan1' ? 'الأول' : 'الثاني') + ')',
+            description:'تنبيهات الصلوات الخمس',
+            importance:5,
+            vibration:true,
+            sound:s
+          }).catch(()=>{});
+        });
         
         LN.createChannel({
           id:'adhan_fajr_channel',
@@ -62,8 +93,7 @@ const Notifier = {
           name:'تنبيهات خُشوع',
           description:'التنبيهات العامة',
           importance:4,
-          vibration:true,
-          sound:'default'
+          vibration:true
         }).catch(()=>{});
       }
     } catch(e){}
@@ -96,7 +126,9 @@ const Notifier = {
         const LN = CapacitorNative.notif();
         const r = await LN.requestPermissions();
         const ok = r.display === 'granted';
+        this.permOK = ok;
         this.updateBadge();
+        if(ok) setTimeout(() => this.openExactAlarmSettings(), 800);
         toast(ok ? '✅ تم تفعيل الإشعارات' : '❌ لم يُمنح الإذن');
         return;
       } catch(e){}
@@ -156,7 +188,7 @@ const Notifier = {
         };
         
         if(opts.at){
-          n.schedule = { at: new Date(opts.at) };
+          n.schedule = { at: new Date(opts.at), allowWhileIdle: true };
           n.ongoing = false;
           n.autoCancel = true;
         }
@@ -217,7 +249,7 @@ const Notifier = {
     }
     
     const soundFile = isFajr ? 'adhan_fajr' : Store.get('adhanSound', 'adhan1');
-    const channelId = isFajr ? 'adhan_fajr_channel' : 'adhan_regular_channel';
+    const channelId = isFajr ? 'adhan_fajr_channel' : 'adhan_ch_' + (soundFile === 'adhan2' ? 'adhan2' : 'adhan1');
     const duaAt = new Date(new Date(at).getTime() + 4 * 60 * 1000);
     const duaId = id + 9000000;
     
@@ -233,7 +265,7 @@ const Notifier = {
               channelId: channelId,
               smallIcon: 'ic_stat_adhan',
               sound: soundFile,
-              schedule: { at: new Date(at) },
+              schedule: { at: new Date(at), allowWhileIdle: true },
               autoCancel: true,
               extra: { type:'adhan', prayer:prayerName, isFajr:isFajr }
             },
@@ -244,7 +276,7 @@ const Notifier = {
               channelId: 'dua_channel',
               smallIcon: 'ic_stat_adhan',
               sound: 'dua_adhan',
-              schedule: { at: duaAt },
+              schedule: { at: duaAt, allowWhileIdle: true },
               autoCancel: true,
               extra: { type:'dua' }
             }
