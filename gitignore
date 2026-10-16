@@ -3,3 +3,4 @@ www/
 android/
 assets/
 *.apk
+.cache/
