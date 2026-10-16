@@ -75,21 +75,61 @@ function copyDir(src, dst){
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function fetchEdition(edition){
-  const url = 'https://api.alquran.cloud/v1/quran/' + edition;
-  for(let attempt = 1; attempt <= 4; attempt++){
+const API = 'https://api.alquran.cloud/v1';
+const CACHE_DIR = path.join(ROOT, '.cache');
+
+async function getJSON(url, attempts){
+  for(let i = 1; i <= attempts; i++){
     try{
       const r = await fetch(url);
       if(!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json();
-      if(!j.data || !j.data.surahs) throw new Error('شكل الاستجابة غير متوقع');
-      return j.data.surahs;
+      return await r.json();
     } catch(e){
-      console.warn('⚠️  ' + edition + ' محاولة ' + attempt + ': ' + e.message);
-      await sleep(2000 * attempt);
+      console.warn('⚠️  ' + url.replace(API, '') + ' محاولة ' + i + ': ' + e.message);
+      if(i < attempts) await sleep(3000 * i);
     }
   }
   return null;
+}
+
+// 1) من الذاكرة المؤقتة  2) المصحف كاملاً في طلب واحد  3) سورة سورة (أخف على الخادم)
+async function fetchEdition(edition){
+  const cacheFile = path.join(CACHE_DIR, edition + '.json');
+  try{
+    if(fs.existsSync(cacheFile)){
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if(Array.isArray(cached) && cached.length === 114){
+        console.log('♻️  ' + edition + ' من الذاكرة المؤقتة');
+        return cached;
+      }
+    }
+  } catch(e){}
+
+  let surahs = null;
+
+  const whole = await getJSON(API + '/quran/' + edition, 3);
+  if(whole && whole.data && whole.data.surahs && whole.data.surahs.length === 114){
+    surahs = whole.data.surahs;
+  } else {
+    console.warn('⚠️  الطلب الكامل فشل — الانتقال لجلب السور واحدة واحدة');
+    const list = [];
+    for(let n = 1; n <= 114; n++){
+      const j = await getJSON(API + '/surah/' + n + '/' + edition, 5);
+      if(!j || !j.data || !j.data.ayahs){
+        console.warn('⚠️  فشل جلب السورة ' + n);
+        return null;
+      }
+      list.push({ ayahs: j.data.ayahs });
+      await sleep(250);
+    }
+    surahs = list;
+  }
+
+  try{
+    mkdir(CACHE_DIR);
+    fs.writeFileSync(cacheFile, JSON.stringify(surahs.map(s => ({ ayahs: s.ayahs.map(a => ({ text:a.text, page:a.page })) }))));
+  } catch(e){}
+  return surahs;
 }
 
 // ---------- الخطوط ----------
