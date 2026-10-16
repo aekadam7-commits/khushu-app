@@ -42,6 +42,10 @@ jobs:
       - name: Prepare offline web assets (www)
         run: node scripts/prepare-offline.js
 
+      - name: Check reciter links (informational)
+        continue-on-error: true
+        run: node scripts/check-reciters.js
+
       - name: Add Android platform
         run: npx cap add android
 
