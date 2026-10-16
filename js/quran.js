@@ -18,6 +18,7 @@ const Quran = {
     this.audio.addEventListener('ended', () => this.playNext());
     
     this.reciter = Store.get('reciter', 'saad');
+    if(!RECITERS.some(x => x.id === this.reciter)) this.reciter = 'saad';
     this.repeat = parseInt(Store.get('repeat', '0'), 10);
     
     this.updateReciterDisplay();
@@ -310,7 +311,7 @@ const Quran = {
    ============================================================ */
 const QuranListen = {
   currentSurah: 0,
-  currentReciter: 'afasy',
+  currentReciter: 'sds',
   playing: false,
   audio: null,
   duration: 0,
@@ -321,7 +322,8 @@ const QuranListen = {
     this.audio = document.getElementById('listenAudio');
     if(!this.audio) return;
     
-    this.currentReciter = Store.get('listenReciter', 'afasy');
+    this.currentReciter = Store.get('listenReciter', 'sds');
+    if(!LISTEN_RECITERS.some(x => x.id === this.currentReciter)) this.currentReciter = 'sds';
     this.continuous = Store.get('listenContinuous', true);
     this.repeatSurah = Store.get('listenRepeatSurah', false);
     
