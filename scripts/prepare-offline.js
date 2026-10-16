@@ -76,6 +76,7 @@ function copyDir(src, dst){
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const API = 'https://api.alquran.cloud/v1';
+const QCOM = 'https://api.quran.com/api/v4';
 const CACHE_DIR = path.join(ROOT, '.cache');
 
 async function getJSON(url, attempts){
@@ -85,14 +86,78 @@ async function getJSON(url, attempts){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return await r.json();
     } catch(e){
-      console.warn('⚠️  ' + url.replace(API, '') + ' محاولة ' + i + ': ' + e.message);
+      console.warn('⚠️  ' + url.replace(API, '').replace(QCOM, '') + ' محاولة ' + i + ': ' + e.message);
       if(i < attempts) await sleep(3000 * i);
     }
   }
   return null;
 }
 
-// 1) من الذاكرة المؤقتة  2) المصحف كاملاً في طلب واحد  3) سورة سورة (أخف على الخادم)
+// المصدر الأول: api.alquran.cloud (يفشل سريعاً إن كان الخادم يرفض الطلبات)
+async function fromAlquranCloud(edition){
+  const whole = await getJSON(API + '/quran/' + edition, 2);
+  if(whole && whole.data && whole.data.surahs && whole.data.surahs.length === 114){
+    return whole.data.surahs;
+  }
+
+  const probe = await getJSON(API + '/surah/1/' + edition, 2);
+  if(!probe || !probe.data || !probe.data.ayahs){
+    console.warn('⚠️  المصدر alquran.cloud لا يستجيب — الانتقال إلى المصدر البديل');
+    return null;
+  }
+
+  const list = [{ ayahs: probe.data.ayahs }];
+  for(let n = 2; n <= 114; n++){
+    const j = await getJSON(API + '/surah/' + n + '/' + edition, 4);
+    if(!j || !j.data || !j.data.ayahs) return null;
+    list.push({ ayahs: j.data.ayahs });
+    await sleep(250);
+  }
+  return list;
+}
+
+// المصدر الثاني: api.quran.com — صفحة صفحة، فيُعرف رقم الصفحة من الطلب نفسه
+async function fromQuranCom(kind, field){
+  const surahs = Array.from({ length:114 }, () => ({ ayahs:[] }));
+  const pages = Array.from({ length:604 }, (_, i) => i + 1);
+  const BATCH = 6;
+
+  for(let i = 0; i < pages.length; i += BATCH){
+    const batch = pages.slice(i, i + BATCH);
+    const ok = await Promise.all(batch.map(async p => {
+      const j = await getJSON(QCOM + '/quran/verses/' + kind + '?page_number=' + p, 4);
+      if(!j || !Array.isArray(j.verses)) return false;
+      for(const v of j.verses){
+        const parts = String(v.verse_key || '').split(':').map(Number);
+        const sn = parts[0], an = parts[1];
+        if(!(sn >= 1 && sn <= 114) || !(an >= 1) || typeof v[field] !== 'string') return false;
+        surahs[sn - 1].ayahs[an - 1] = { text: v[field], page: p };
+      }
+      return true;
+    }));
+    if(ok.some(x => !x)){
+      console.warn('⚠️  فشل جلب بعض الصفحات من api.quran.com');
+      return null;
+    }
+    if((i / BATCH) % 20 === 0) console.log('   ... صفحة ' + Math.min(i + BATCH, 604) + ' / 604');
+    await sleep(150);
+  }
+
+  // لا يجوز وجود ثغرات في الآيات
+  for(const s of surahs){
+    for(let k = 0; k < s.ayahs.length; k++){
+      if(!s.ayahs[k]) return null;
+    }
+  }
+  return surahs;
+}
+
+const QCOM_KINDS = {
+  'quran-uthmani': ['uthmani', 'text_uthmani'],
+  'quran-simple':  ['imlaei', 'text_imlaei']
+};
+
+// الترتيب: ذاكرة مؤقتة ← alquran.cloud ← api.quran.com
 async function fetchEdition(edition){
   const cacheFile = path.join(CACHE_DIR, edition + '.json');
   try{
@@ -105,30 +170,22 @@ async function fetchEdition(edition){
     }
   } catch(e){}
 
-  let surahs = null;
+  let surahs = await fromAlquranCloud(edition);
 
-  const whole = await getJSON(API + '/quran/' + edition, 3);
-  if(whole && whole.data && whole.data.surahs && whole.data.surahs.length === 114){
-    surahs = whole.data.surahs;
-  } else {
-    console.warn('⚠️  الطلب الكامل فشل — الانتقال لجلب السور واحدة واحدة');
-    const list = [];
-    for(let n = 1; n <= 114; n++){
-      const j = await getJSON(API + '/surah/' + n + '/' + edition, 5);
-      if(!j || !j.data || !j.data.ayahs){
-        console.warn('⚠️  فشل جلب السورة ' + n);
-        return null;
-      }
-      list.push({ ayahs: j.data.ayahs });
-      await sleep(250);
-    }
-    surahs = list;
+  if(!surahs && QCOM_KINDS[edition]){
+    console.log('🔁 جلب ' + edition + ' من api.quran.com ...');
+    surahs = await fromQuranCom(QCOM_KINDS[edition][0], QCOM_KINDS[edition][1]);
   }
+  if(!surahs) return null;
 
   try{
+    buildData(surahs, edition === 'quran-uthmani'); // تحقق قبل الحفظ في الذاكرة
     mkdir(CACHE_DIR);
     fs.writeFileSync(cacheFile, JSON.stringify(surahs.map(s => ({ ayahs: s.ayahs.map(a => ({ text:a.text, page:a.page })) }))));
-  } catch(e){}
+  } catch(e){
+    console.warn('⚠️  البيانات غير صالحة: ' + e.message);
+    return null;
+  }
   return surahs;
 }
 
@@ -187,7 +244,14 @@ async function main(){
   // 4) نص القرآن
   console.log('⏬ جلب نص القرآن (العثماني)...');
   const uth = await fetchEdition('quran-uthmani');
-  if(!uth) throw new Error('تعذر جلب نص القرآن — تحقق من اتصال الشبكة ثم أعد المحاولة');
+  if(!uth){
+    if(process.env.REQUIRE_QURAN === '1'){
+      throw new Error('تعذر جلب نص القرآن من أي مصدر');
+    }
+    console.warn('⚠️  تعذر جلب نص القرآن من كل المصادر. سيُبنى التطبيق بدونه، وسيحتاج القرآن إلى إنترنت. أعد تشغيل البناء لاحقاً.');
+    console.log('🎉 اكتمل تجهيز www (بدون نص القرآن المحلي)');
+    return;
+  }
   const main = buildData(uth, true);
   mkdir(path.join(WWW, 'data'));
   fs.writeFileSync(path.join(WWW, 'data', 'quran-data.js'),
