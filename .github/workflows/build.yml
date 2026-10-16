@@ -33,6 +33,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Cache Quran data
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: quran-data-v1
+
       - name: Prepare offline web assets (www)
         run: node scripts/prepare-offline.js
 
